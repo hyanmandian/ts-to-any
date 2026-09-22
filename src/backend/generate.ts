@@ -55,7 +55,20 @@ export type Backend = {
 	 * A program that reads `{"fn": …, "args": […]}` lines and answers `{"ok": …}` lines, so the
 	 * differential harness can drive every target through one protocol.
 	 */
-	readonly driver?: (program: CProgram, entryPoints: readonly DriverEntry[]) => { path: string; text: string }[];
+	/**
+	 * `modules` is the final, per-module list this run actually printed (path, source module, and
+	 * every function it holds) — the one target-independent source of truth for "what got
+	 * generated". A target whose driver needs to know the complete file set (F#'s `.fsproj`, whose
+	 * `<Compile>` order has to name every file, including ones a portable lowering pulled in that
+	 * never shows up in `CProgram.functions[].calls` — that connection is made during lowering, not
+	 * before it) reads it from here rather than recomputing reachability itself. Optional last
+	 * parameter: every existing driver keeps working unchanged.
+	 */
+	readonly driver?: (
+		program: CProgram,
+		entryPoints: readonly DriverEntry[],
+		modules: readonly TModule[],
+	) => { path: string; text: string }[];
 	/**
 	 * How this target reaches its own platform default capabilities, present only when it has one
 	 * to reach. TypeScript and Python do; Go and Rust ship no concrete implementation in the
@@ -249,7 +262,7 @@ export function generate(
 			});
 		}
 	}
-	for (const file of backend.driver?.(program, entries) ?? []) files.push(file);
+	for (const file of backend.driver?.(program, entries, modules) ?? []) files.push(file);
 
 	const errors = backend.errorsModule?.(program);
 	if (errors !== undefined) files.push(errors);
@@ -503,7 +516,7 @@ function computeImports(
 }
 
 /** Directories that belong to the target's own toolchain, never to this engine. */
-const FOREIGN_DIRECTORIES = new Set(["target", "__pycache__", "node_modules", ".git"]);
+const FOREIGN_DIRECTORIES = new Set(["target", "__pycache__", "node_modules", ".git", "bin", "obj"]);
 
 /**
  * Removes generated files this run did not produce.

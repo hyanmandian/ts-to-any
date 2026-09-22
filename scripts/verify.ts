@@ -238,6 +238,15 @@ const steps: Step[] = [
 		run: forTarget("ruby", () => shell("standardrb", ["--no-parallel", "."], join(project, "out", "ruby"))),
 	},
 	{
+		// `dotnet format` refuses an F# project (`docs/targets/fsharp.md`), so there is no formatter
+		// step for this target; `-warnaserror` is this target's `staticcheck`/`clippy`, catching an
+		// unused `open`, an incomplete pattern match or a shadowed binding.
+		name: "fsharp build (warnings as errors)",
+		run: forTarget("fsharp", () =>
+			shell("dotnet", ["build", "-warnaserror", "-nologo", "-v", "quiet"], join(project, "out", "fsharp", "Driver")),
+		),
+	},
+	{
 		name: "rust build",
 		run: forTarget("rust", () => shell("cargo", ["build", "--offline", "--release"], join(project, "out", "rust"))),
 	},

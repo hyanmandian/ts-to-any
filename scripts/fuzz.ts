@@ -75,7 +75,7 @@ function main(): void {
 	}
 
 	if (mode === "full") {
-		const targetsFlag = flag("targets", "typescript,python,go,rust,ruby");
+		const targetsFlag = flag("targets", "typescript,python,go,rust,ruby,fsharp");
 		const targets = targetsFlag.split(",").map((t) => t.trim()) as ("typescript" | "python" | "go" | "rust" | "ruby")[];
 		process.stdout.write(
 			`full mode: seed=${seed} count=${count} cases/program=${cases} targets=${targets.join(",")}\n`,

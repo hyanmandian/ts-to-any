@@ -20,6 +20,7 @@ import { PYTHON_BACKEND } from "../targets/python/index.ts";
 import { GO_BACKEND } from "../targets/go/index.ts";
 import { RUST_BACKEND } from "../targets/rust/index.ts";
 import { RUBY_BACKEND } from "../targets/ruby/index.ts";
+import { FSHARP_BACKEND } from "../targets/fsharp/index.ts";
 import { compare, runInterpreter, runTarget } from "../conformance/differential.ts";
 import type { Case, Divergence, TargetRunner } from "../conformance/differential.ts";
 import { DomainFailure } from "../intrinsics/index.ts";
@@ -40,6 +41,7 @@ const BACKENDS = {
 	go: GO_BACKEND,
 	rust: RUST_BACKEND,
 	ruby: RUBY_BACKEND,
+	fsharp: FSHARP_BACKEND,
 } as const;
 
 /** A scratch project directory holding exactly one source module, overwritten on every call. */
@@ -247,6 +249,12 @@ function runners(
 			args: ["_driver.rb"],
 			cwd: resolve(outRoot, `ruby${suffix}`),
 		},
+		fsharp: {
+			name: `fsharp${suffix}`,
+			command: "dotnet",
+			args: ["run", "--project", "Driver/Driver.fsproj", "-c", "Release"],
+			cwd: resolve(outRoot, `fsharp${suffix}`),
+		},
 	};
 	return targets.map((target) => all[target]);
 }
@@ -255,7 +263,7 @@ export function runFull(
 	seed: number,
 	count: number,
 	casesPerProgram = 4,
-	targets: readonly (keyof typeof BACKENDS)[] = ["typescript", "python", "go", "rust", "ruby"],
+	targets: readonly (keyof typeof BACKENDS)[] = ["typescript", "python", "go", "rust", "ruby", "fsharp"],
 	onProgress?: ProgressCb,
 ): FullReport {
 	const start = Date.now();

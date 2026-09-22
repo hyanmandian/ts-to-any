@@ -20,6 +20,7 @@ import { PYTHON_BACKEND } from "./targets/python/index.ts";
 import { GO_BACKEND } from "./targets/go/index.ts";
 import { RUST_BACKEND } from "./targets/rust/index.ts";
 import { RUBY_BACKEND } from "./targets/ruby/index.ts";
+import { FSHARP_BACKEND } from "./targets/fsharp/index.ts";
 
 const BACKENDS = {
 	typescript: TYPESCRIPT_BACKEND,
@@ -27,6 +28,7 @@ const BACKENDS = {
 	go: GO_BACKEND,
 	rust: RUST_BACKEND,
 	ruby: RUBY_BACKEND,
+	fsharp: FSHARP_BACKEND,
 };
 
 function flag(name: string, fallback?: string): string | undefined {
