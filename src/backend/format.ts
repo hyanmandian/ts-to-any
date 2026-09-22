@@ -66,6 +66,15 @@ function formattersFor(target: string): Formatter[] {
 			// check, since an unformatted file is reported as an offense the same way a real lint
 			// violation is.
 			return [{ name: "standardrb --fix", command: "standardrb", args: ["--fix", "--no-parallel"], probe: ["--version"] }];
+		case "fsharp":
+			// `dotnet format` refuses an F# project outright ("Format currently supports only C# and
+			// Visual Basic projects", verified against SDK 8.0.131) — see `docs/targets/fsharp.md`.
+		case "erlang":
+			// No formatter in this toolchain for Erlang either: OTP ships none, and `erlfmt` needs
+			// `rebar3` — see `docs/targets/erlang.md`. For both of these the printer's own output is
+			// the committed byte shape, written to be stable on its own (fixed indentation, no
+			// trailing whitespace), and `verify`'s determinism step is what holds it to that.
+			return [];
 		default:
 			return [];
 	}

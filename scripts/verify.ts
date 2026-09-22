@@ -238,6 +238,20 @@ const steps: Step[] = [
 		run: forTarget("ruby", () => shell("standardrb", ["--no-parallel", "."], join(project, "out", "ruby"))),
 	},
 	{
+		// `+warn_unused_vars +warnings_as_errors`: Erlang/OTP ships no dedicated linter the way `go
+		// vet`/`clippy` are one, but `erlc` itself, with warnings promoted to errors, catches exactly
+		// the class of bug this backend's own compiler could introduce (a shadowed or reused name,
+		// an unused binding) — see `docs/targets/erlang.md`. Compiled in place, the same way `go
+		// vet`/`cargo build` check their own target's output directory.
+		name: "erlang compile",
+		run: forTarget("erlang", () => {
+			const dir = join(project, "out", "erlang");
+			if (!existsSync(dir)) return { ok: true, output: "skipped: no erlang output" };
+			const sources = readdirSync(dir).filter((entry) => entry.endsWith(".erl"));
+			return shell("erlc", ["+warn_unused_vars", "+warnings_as_errors", ...sources], dir);
+		}),
+	},
+	{
 		// `dotnet format` refuses an F# project (`docs/targets/fsharp.md`), so there is no formatter
 		// step for this target; `-warnaserror` is this target's `staticcheck`/`clippy`, catching an
 		// unused `open`, an incomplete pattern match or a shadowed binding.

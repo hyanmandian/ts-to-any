@@ -21,6 +21,7 @@ import { GO_BACKEND } from "../targets/go/index.ts";
 import { RUST_BACKEND } from "../targets/rust/index.ts";
 import { RUBY_BACKEND } from "../targets/ruby/index.ts";
 import { FSHARP_BACKEND } from "../targets/fsharp/index.ts";
+import { ERLANG_BACKEND } from "../targets/erlang/index.ts";
 import { compare, runInterpreter, runTarget } from "../conformance/differential.ts";
 import type { Case, Divergence, TargetRunner } from "../conformance/differential.ts";
 import { DomainFailure } from "../intrinsics/index.ts";
@@ -42,6 +43,7 @@ const BACKENDS = {
 	rust: RUST_BACKEND,
 	ruby: RUBY_BACKEND,
 	fsharp: FSHARP_BACKEND,
+	erlang: ERLANG_BACKEND,
 } as const;
 
 /** A scratch project directory holding exactly one source module, overwritten on every call. */
@@ -255,6 +257,12 @@ function runners(
 			args: ["run", "--project", "Driver/Driver.fsproj", "-c", "Release"],
 			cwd: resolve(outRoot, `fsharp${suffix}`),
 		},
+		erlang: {
+			name: `erlang${suffix}`,
+			command: "sh",
+			args: ["-c", "erlc +warn_unused_vars +warnings_as_errors *.erl >&2 && escript run_driver.escript"],
+			cwd: resolve(outRoot, `erlang${suffix}`),
+		},
 	};
 	return targets.map((target) => all[target]);
 }
@@ -263,7 +271,7 @@ export function runFull(
 	seed: number,
 	count: number,
 	casesPerProgram = 4,
-	targets: readonly (keyof typeof BACKENDS)[] = ["typescript", "python", "go", "rust", "ruby", "fsharp"],
+	targets: readonly (keyof typeof BACKENDS)[] = ["typescript", "python", "go", "rust", "ruby", "fsharp", "erlang"],
 	onProgress?: ProgressCb,
 ): FullReport {
 	const start = Date.now();
