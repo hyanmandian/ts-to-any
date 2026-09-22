@@ -1,0 +1,46 @@
+# The engine's own verification, against its own example projects. Deliberately not against any
+# particular library: the engine is generic, and a project it has never seen has to be enough to
+# prove it works. `brazilian-utils/core` runs this same `verify` against itself, in its own CI.
+name: CI
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+  push:
+    branches: [main]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: Verify the engine and the code it generates
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .nvmrc
+
+      - name: Install dependencies
+        run: npm ci
+
+      # The generated output is committed, so the formatters decide its bytes and a missing one
+      # is not a missing nicety: `verify` fails outright rather than let the checkout drift.
+      - name: Install ruff, the Python formatter
+        run: pipx install ruff==0.15.8
+
+      - name: Verify the generic example
+        run: node scripts/verify.ts examples/generic
+
+      - name: Fuzz the checker against the reference interpreter
+        run: node scripts/fuzz.ts full --seed 20260922 --count 200

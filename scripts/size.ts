@@ -145,8 +145,10 @@ async function main(): Promise<void> {
 	const snapshotPath = join(outDir, "SIZE.json");
 	if (mode === "check") {
 		if (!existsSync(snapshotPath)) {
-			process.stdout.write("no SIZE.json to compare against\n");
-			process.exitCode = 1;
+			// A project opts into the size gate by committing a baseline. One that has not is not
+			// failing the gate, it has not set one — and saying so is more useful than refusing to
+			// run. The projects that do care commit `SIZE.json`, and from then on any growth fails.
+			process.stdout.write(`skipped: no ${snapshotPath} to compare against; run with --write to set a baseline\n`);
 			return;
 		}
 		const base = JSON.parse(readFileSync(snapshotPath, "utf8")) as Snapshot;

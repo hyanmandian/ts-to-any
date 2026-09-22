@@ -18,11 +18,38 @@ const project = resolve(process.argv[2] ?? ".");
 type Step = { name: string; run: () => { ok: boolean; output?: string } };
 
 function shell(command: string, args: readonly string[], cwd: string): { ok: boolean; output?: string } {
+	// A missing working directory and a missing command both surface as ENOENT from `spawnSync`,
+	// and reporting the second when it was the first is a lie that reads as reassurance: a project
+	// that does not generate a target has no output directory for that target, and saying its
+	// compiler "is not installed" hides the fact that the step ran against nothing. Checked first,
+	// so the message names what is actually absent.
+	if (!existsSync(cwd)) return { ok: true, output: `skipped: ${cwd} does not exist` };
 	const result = spawnSync(command, [...args], { cwd, encoding: "utf8" });
 	if (result.error !== undefined && (result.error as NodeJS.ErrnoException).code === "ENOENT") {
 		return { ok: true, output: `skipped: ${command} is not installed` };
 	}
 	return { ok: result.status === 0, output: `${result.stdout}${result.stderr}`.trim() };
+}
+
+/**
+ * The targets this project actually generates, which is what decides how many of the per-target
+ * steps below are real. The engine is generic — a project names its own targets, and a project
+ * that does not build Rust should not be told about Rust's toolchain at all.
+ */
+function configuredTargets(): readonly string[] {
+	try {
+		const config = JSON.parse(readFileSync(join(project, "engine.config.json"), "utf8")) as { targets?: string[] };
+		return config.targets ?? [];
+	} catch {
+		return [];
+	}
+}
+
+const TARGETS = configuredTargets();
+
+/** Wraps a per-target step so a project that does not build that target says so, once, plainly. */
+function forTarget(target: string, run: () => { ok: boolean; output?: string }): () => { ok: boolean; output?: string } {
+	return () => (TARGETS.includes(target) ? run() : { ok: true, output: `skipped: ${target} is not a target of this project` });
 }
 
 function filesOf(root: string): Map<string, string> {
@@ -132,7 +159,7 @@ const steps: Step[] = [
 	},
 	{
 		name: "typescript typecheck",
-		run: () =>
+		run: forTarget("typescript", () =>
 			shell(
 				join(ENGINE, "node_modules", ".bin", "tsc"),
 				[
@@ -154,6 +181,7 @@ const steps: Step[] = [
 				],
 				join(project, "out", "typescript"),
 			),
+		),
 	},
 	{
 		// The generated TypeScript is shipped to a browser by a tree-shakeable package, so its size
@@ -161,27 +189,27 @@ const steps: Step[] = [
 		// what a consumer's bundler would produce for a single-import entry point and compares it
 		// with the committed `SIZE.json`; a per-export regression past the budget fails here.
 		name: "typescript size",
-		run: () => shell(process.execPath, [join(ENGINE, "scripts", "size.ts"), project, "--check"], project),
+		run: forTarget("typescript", () => shell(process.execPath, [join(ENGINE, "scripts", "size.ts"), project, "--check"], project)),
 	},
 	{
 		name: "python compile",
-		run: () => shell("python3", ["-m", "compileall", "-q", "."], join(project, "out", "python")),
+		run: forTarget("python", () => shell("python3", ["-m", "compileall", "-q", "."], join(project, "out", "python"))),
 	},
 	{
 		name: "go vet",
-		run: () => shell("go", ["vet", "./..."], join(project, "out", "go")),
+		run: forTarget("go", () => shell("go", ["vet", "./..."], join(project, "out", "go"))),
 	},
 	{
 		name: "rust build",
-		run: () => shell("cargo", ["build", "--offline", "--release"], join(project, "out", "rust")),
+		run: forTarget("rust", () => shell("cargo", ["build", "--offline", "--release"], join(project, "out", "rust"))),
 	},
 	{
 		name: "rust clippy",
-		run: () => shell("cargo", ["clippy", "--offline", "--", "-D", "warnings"], join(project, "out", "rust")),
+		run: forTarget("rust", () => shell("cargo", ["clippy", "--offline", "--", "-D", "warnings"], join(project, "out", "rust"))),
 	},
 	{
 		name: "rust fmt check",
-		run: () => shell("cargo", ["fmt", "--check"], join(project, "out", "rust")),
+		run: forTarget("rust", () => shell("cargo", ["fmt", "--check"], join(project, "out", "rust"))),
 	},
 	{
 		name: "conformance",

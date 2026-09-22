@@ -1,17 +1,22 @@
 # Logic engine
 
 Write a library's logic **once**, in a restricted, semantically typed subset of TypeScript, and
-generate a native, idiomatic implementation for TypeScript, Python and Go.
+generate a native, idiomatic implementation for TypeScript, Python, Go and Rust.
 
 No shared runtime package. No WASM, no FFI, no bridge. No interpreter at run time. No external
 dependencies in the generated code.
 
 ```sh
-npm install            # one runtime dependency, the parser; prettier and tsc for development
-npm test               # the engine's own suite
-node src/cli.ts build --project ../core
-node scripts/verify.ts ../core
+npm install                                    # one runtime dependency, the parser
+npm test                                       # the engine's own suite
+node src/cli.ts build --project examples/generic   # generate a project's targets
+node scripts/verify.ts examples/generic            # compile, generate, lint, diff, conform
 ```
+
+The engine knows nothing about any particular library. A **project** is a directory with an
+`engine.config.json` naming its source root and its targets; `examples/generic` is one, and
+`brazilian-utils/core` is the one this engine was built against. Every command above takes a project path, and a project that does not name a target is
+never asked about that target's toolchain.
 
 ## What it is
 
