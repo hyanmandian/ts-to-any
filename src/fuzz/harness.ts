@@ -19,6 +19,7 @@ import { TYPESCRIPT_BACKEND } from "../targets/typescript/index.ts";
 import { PYTHON_BACKEND } from "../targets/python/index.ts";
 import { GO_BACKEND } from "../targets/go/index.ts";
 import { RUST_BACKEND } from "../targets/rust/index.ts";
+import { RUBY_BACKEND } from "../targets/ruby/index.ts";
 import { compare, runInterpreter, runTarget } from "../conformance/differential.ts";
 import type { Case, Divergence, TargetRunner } from "../conformance/differential.ts";
 import { DomainFailure } from "../intrinsics/index.ts";
@@ -38,6 +39,7 @@ const BACKENDS = {
 	python: PYTHON_BACKEND,
 	go: GO_BACKEND,
 	rust: RUST_BACKEND,
+	ruby: RUBY_BACKEND,
 } as const;
 
 /** A scratch project directory holding exactly one source module, overwritten on every call. */
@@ -239,6 +241,12 @@ function runners(
 			args: ["run", "--offline", "--release", "--quiet", "--bin", "driver"],
 			cwd: resolve(outRoot, `rust${suffix}`),
 		},
+		ruby: {
+			name: `ruby${suffix}`,
+			command: "ruby",
+			args: ["_driver.rb"],
+			cwd: resolve(outRoot, `ruby${suffix}`),
+		},
 	};
 	return targets.map((target) => all[target]);
 }
@@ -247,7 +255,7 @@ export function runFull(
 	seed: number,
 	count: number,
 	casesPerProgram = 4,
-	targets: readonly (keyof typeof BACKENDS)[] = ["typescript", "python", "go", "rust"],
+	targets: readonly (keyof typeof BACKENDS)[] = ["typescript", "python", "go", "rust", "ruby"],
 	onProgress?: ProgressCb,
 ): FullReport {
 	const start = Date.now();

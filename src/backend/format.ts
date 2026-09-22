@@ -59,6 +59,13 @@ function formattersFor(target: string): Formatter[] {
 			// `cargo fmt` is rustfmt: it runs rustfmt over every file the crate's Cargo.toml lists,
 			// which a bare `rustfmt <files>` invocation would have to enumerate by hand.
 			return [{ name: "rustfmt", command: "cargo", args: ["fmt"], probe: ["fmt", "--version"] }];
+		case "ruby":
+			// Standard Ruby bundles linting and formatting into one command (unlike ruff's separate
+			// `check`/`format`): `--fix` here is the formatter, and a plain `standardrb` run (no
+			// `--fix`) is what `verify.ts` uses as both the linter and the formatter-conformance
+			// check, since an unformatted file is reported as an offense the same way a real lint
+			// violation is.
+			return [{ name: "standardrb --fix", command: "standardrb", args: ["--fix", "--no-parallel"], probe: ["--version"] }];
 		default:
 			return [];
 	}

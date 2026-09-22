@@ -34,12 +34,21 @@
 				"go vet",
 				"staticcheck"
 			]
+		},
+		"ruby": {
+			"baseline": "Ruby 3.2",
+			"formatter": "standardrb --fix",
+			"formatterVersion": "1.43.0",
+			"linters": [
+				"standardrb"
+			]
 		}
 	},
 	"measuredWith": {
 		"node": "v22.22.2",
 		"python": "Python 3.11.15",
 		"go": "go version go1.24.7 linux/amd64",
+		"ruby": "ruby 3.3.6",
 		"icu": "78.2"
 	}
 }

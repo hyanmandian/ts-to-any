@@ -80,6 +80,21 @@ function generatedTypeScript(root: string): string[] {
 	return files;
 }
 
+/** Every generated Ruby file under a directory, absolute paths. */
+function generatedRuby(root: string): string[] {
+	const files: string[] = [];
+	if (!existsSync(root)) return files;
+	const walk = (directory: string): void => {
+		for (const entry of readdirSync(directory)) {
+			const full = join(directory, entry);
+			if (statSync(full).isDirectory()) walk(full);
+			else if (entry.endsWith(".rb")) files.push(full);
+		}
+	};
+	walk(root);
+	return files;
+}
+
 const steps: Step[] = [
 	{
 		// The generated output is committed, so a missing formatter is not a missing nicety: it
@@ -87,7 +102,7 @@ const steps: Step[] = [
 		// checkout drifts from what is in the repository.
 		name: "formatters",
 		run: () => {
-			const missing = ["typescript", "python", "go", "rust"].flatMap((target) =>
+			const missing = TARGETS.flatMap((target) =>
 				formattersOf(target)
 					.filter((formatter) => !formatter.installed)
 					.map((formatter) => `${target}: ${formatter.name}`),
@@ -198,6 +213,29 @@ const steps: Step[] = [
 	{
 		name: "go vet",
 		run: forTarget("go", () => shell("go", ["vet", "./..."], join(project, "out", "go"))),
+	},
+	{
+		name: "ruby syntax check",
+		run: forTarget("ruby", () => {
+			const dir = join(project, "out", "ruby");
+			const files = generatedRuby(dir);
+			if (files.length === 0) return { ok: true, output: "skipped: no generated ruby" };
+			const failures: string[] = [];
+			for (const file of files) {
+				const result = shell("ruby", ["-c", file], dir);
+				if (result.output?.startsWith("skipped")) return result;
+				if (!result.ok) failures.push(result.output ?? file);
+			}
+			return failures.length === 0 ? { ok: true } : { ok: false, output: failures.join("\n") };
+		}),
+	},
+	{
+		// Standard Ruby bundles linting and formatting into one command (unlike ruff's separate
+		// `check`/`format` binaries), so this same invocation, run without `--fix`, is both the
+		// linter and the formatter-conformance check the other targets split in two: an unformatted
+		// file is reported as an offense exactly the way a real style or correctness violation is.
+		name: "ruby lint (standardrb, doubles as the formatter check)",
+		run: forTarget("ruby", () => shell("standardrb", ["--no-parallel", "."], join(project, "out", "ruby"))),
 	},
 	{
 		name: "rust build",

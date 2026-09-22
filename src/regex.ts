@@ -417,7 +417,7 @@ function matchNode(
  * `^…$` in JavaScript, whose `^`/`$` are string anchors without the `m` flag).
  */
 /** The dialects the subset prints into. They read the normalized pattern identically. */
-export type RegexDialect = "javascript" | "python" | "go";
+export type RegexDialect = "javascript" | "python" | "go" | "ruby";
 
 export function printRegex(node: RegexNode, dialect: RegexDialect = "javascript"): string {
 	switch (node.kind) {
