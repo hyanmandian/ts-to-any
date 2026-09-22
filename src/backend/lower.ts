@@ -53,6 +53,15 @@ export type LowerOptions = {
 	 * Absent for every target that has no such distinction, which is every target but Rust.
 	 */
 	readonly borrows?: BorrowMap;
+	/**
+	 * Functions (the same qualified-name scheme `BorrowMap` uses) whose Rust return type may be
+	 * `Cow<'_, str>` instead of an owned `String` — the Rust backend's own pre-pass, layered on
+	 * top of `borrows` above (see `docs/decisions/0014-*.md` and `analysis/cow-returns.ts`). The
+	 * lowerer only consults this set, on `TFunc.cowReturn`, a "call" node's `resultIsCow`, and
+	 * `EmitContext.cowReturn` for the return statement's own top-level expression; it never
+	 * decides Cow-eligibility itself. Absent for every target but Rust.
+	 */
+	readonly cowReturns?: ReadonlySet<string>;
 };
 
 export type LoweredProgram = {
@@ -102,6 +111,13 @@ class Lowerer {
 	 * set once, before a function's body is lowered, not discovered from print-time scope.
 	 */
 	private currentBorrowedParams: ReadonlySet<string> = new Set();
+	/**
+	 * True while lowering a function `options.cowReturns` found eligible (see
+	 * `docs/decisions/0014-*.md`). Set once, before that function's body is lowered, the same way
+	 * `currentBorrowedParams` is; read only by the "return" case of `statement`, to flag that one
+	 * statement's own top-level expression via `EmitContext.cowReturn`.
+	 */
+	private currentCowReturn = false;
 	/**
 	 * Functions some *other* generated module calls. A source module's own `export` decides a
 	 * function's visibility (`CFunc.moduleExported`), but a specialization (ADR 0004) is not the
@@ -259,6 +275,9 @@ class Lowerer {
 		const borrowedHere = this.options.borrows?.get(fn.name) ?? new Set<string>();
 		const previousBorrowed = this.currentBorrowedParams;
 		this.currentBorrowedParams = borrowedHere;
+		const cowReturnHere = this.options.cowReturns?.has(fn.name) ?? false;
+		const previousCowReturn = this.currentCowReturn;
+		this.currentCowReturn = cowReturnHere;
 		const params: TParam[] = fn.params.map((param) => ({
 			name: this.spec.naming.value(param.name),
 			type: param.type,
@@ -278,10 +297,12 @@ class Lowerer {
 				isAsync: this.spec.asyncColouring && fn.effects.http,
 				fails: fn.effects.fail,
 				usesEnv: fn.usesEnv,
+				cowReturn: cowReturnHere,
 				source: { module: fn.module, name: fn.localName, start: fn.span.start, end: fn.span.end },
 			};
 		} finally {
 			this.currentBorrowedParams = previousBorrowed;
+			this.currentCowReturn = previousCowReturn;
 		}
 	}
 
@@ -382,7 +403,16 @@ class Lowerer {
 				];
 			case "return": {
 				if (statement.value === undefined) return [{ kind: "return" }];
-				const value = this.expr(statement.value);
+				// A Cow-eligible function's own return value (see `docs/decisions/0014-*.md`) is
+				// lowered through `operation` directly, with the flag set, rather than through the
+				// ordinary `expr` dispatch: only *this* one, top-level expression is the function's
+				// actual return value, so this is the one place the flag can be scoped correctly —
+				// `operation`'s own recursion into a nested op's arguments never sees it, because
+				// nothing here passes it along past this single call.
+				const value =
+					this.currentCowReturn && statement.value.kind === "op"
+						? this.operation(statement.value, true)
+						: this.expr(statement.value);
 				return [
 					this.spec.errorsAsValues && this.currentFails.length > 0
 						? { kind: "return", value, extra: [{ kind: "raw", text: "nil" }] }
@@ -543,12 +573,13 @@ class Lowerer {
 		});
 	}
 
-	private context(): EmitContext {
+	private context(cowReturn = false): EmitContext {
 		return {
 			require: (module) => this.imports.get(this.currentModule)?.add(module),
 			nameOf: (qualified) => this.names.get(qualified) ?? qualified,
 			needSource: (qualified) => this.needed.add(qualified),
 			env: () => ({ kind: "name", name: ENV_PARAM }),
+			cowReturn,
 		};
 	}
 
@@ -609,6 +640,7 @@ class Lowerer {
 					callee: { kind: "name", name: this.names.get(expr.fn) ?? expr.fn },
 					args,
 					borrowedArgs,
+					resultIsCow: this.options.cowReturns?.has(expr.fn),
 					await: this.spec.asyncColouring && callee?.effects.http === true,
 				};
 				if (this.spec.errorsAsValues && (callee?.effects.fail.length ?? 0) > 0) {
@@ -687,7 +719,7 @@ class Lowerer {
 	 * gets to make that one-buffer decision; a target with no such candidate (every one but Rust,
 	 * today) falls straight through to the ordinary pairwise path below, unchanged.
 	 */
-	private operation(expr: Extract<CExpr, { kind: "op" }>): TExpr {
+	private operation(expr: Extract<CExpr, { kind: "op" }>, asCowReturn = false): TExpr {
 		if (expr.op === "str.concat" && this.spec.table.has("str.concatAll")) {
 			const pieces = flattenConcat(expr);
 			if (pieces.length > 2) {
@@ -695,10 +727,16 @@ class Lowerer {
 			}
 		}
 		const op = expr.op === "re.test" ? "re.test" : expr.op;
-		return this.emitOp(op, expr.args.map((arg) => this.expr(arg)), expr.args.map((arg) => arg.type), expr.regex);
+		return this.emitOp(op, expr.args.map((arg) => this.expr(arg)), expr.args.map((arg) => arg.type), expr.regex, asCowReturn);
 	}
 
-	private emitOp(op: string, args: readonly TExpr[], types: readonly SemType[], regex: NormalizedRegex | undefined): TExpr {
+	private emitOp(
+		op: string,
+		args: readonly TExpr[],
+		types: readonly SemType[],
+		regex: NormalizedRegex | undefined,
+		asCowReturn = false,
+	): TExpr {
 		const selection = this.spec.table.select(op, types);
 		const candidate = selection.candidate;
 		if (candidate.sourceFn !== undefined) {
@@ -707,7 +745,7 @@ class Lowerer {
 			if (set === undefined) this.moduleNeeds.set(this.currentModule, new Set([candidate.sourceFn]));
 			else set.add(candidate.sourceFn);
 		}
-		const context = this.context();
+		const context = this.context(asCowReturn);
 		if (regex !== undefined) return candidate.emit(args, types, { ...context, regex });
 		return candidate.emit(args, types, context);
 	}

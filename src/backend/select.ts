@@ -30,6 +30,15 @@ export type EmitContext = {
 	readonly env: () => TExpr;
 	/** The normalized pattern, for the `re.test` lowerings. */
 	readonly regex?: NormalizedRegex;
+	/**
+	 * True while lowering the return statement's own top-level expression of a function the
+	 * whole-program Cow-return pre-pass (`analysis/cow-returns.ts`) found eligible — see
+	 * `docs/decisions/0014-*.md`. A candidate for an op in `COW_SOURCE_OPS` (today, only
+	 * `re.retain`) may consult this to build the Cow-returning form of its own code instead of the
+	 * always-owned one; every other candidate ignores it, and it is `false` everywhere else,
+	 * including for every target but Rust.
+	 */
+	readonly cowReturn?: boolean;
 };
 
 export type Candidate = {

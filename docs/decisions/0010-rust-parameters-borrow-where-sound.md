@@ -1,6 +1,12 @@
 # 0010 — Rust parameters borrow where a whole-program pre-pass proves it is sound
 
-**Supersedes [0009](0009-rust-values-are-owned.md).**
+**Supersedes [0009](0009-rust-values-are-owned.md). Extended, narrowly, by
+[0014](0014-rust-derived-string-returns-may-borrow.md)**, which lets a function whose entire body
+returns one operation applied to its own (already-borrowed) parameter print `Cow<'_, str>` instead
+of `String` — see that decision for the condition and why it does not reopen the "return types stay
+owned" question this decision answers below in general. Every claim in this record about
+*parameters* is untouched; 0014 is additive, and it never fires for a target other than Rust or for
+a Rust function that does not meet its own, much narrower condition.
 
 ## Context
 
@@ -82,6 +88,14 @@ type is not expressible without one either, since nothing borrowed can outlive t
 produced it. `toOwned` already converts a borrow to an owned value uniformly at both positions
 (`&str`'s `.to_owned()` and `String`'s `.to_owned()` are the same call, printed the same way), so
 nothing about them needed to change for parameters to start borrowing.
+
+**A plain `&str` return is still not expressible, and this decision's claim about *that* stands.**
+What [0014](0014-rust-derived-string-returns-may-borrow.md) found is a narrower, checkable case this
+paragraph did not consider: `Cow<'_, str>` is a return type that is a borrow *conditionally*,
+decided at compile time from a whole-program fact, never a plain `&str` claiming to outlive its
+call. It applies to a vanishingly small, structurally-checked set of functions (one, in this
+project, as of 0014) and changes nothing about record fields, which still take a lifetime parameter
+neither decision found a reason to add.
 
 ### Why this is sound, position by position
 

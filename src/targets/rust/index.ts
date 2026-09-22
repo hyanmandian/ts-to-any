@@ -24,6 +24,7 @@
  */
 
 import { computeBorrowableParams } from "../../analysis/borrows.ts";
+import { computeCowReturns } from "../../analysis/cow-returns.ts";
 import type { Backend, DriverEntry, SupportNeeds } from "../../backend/generate.ts";
 import { ENGINE_VERSION } from "../../backend/generate.ts";
 import type { TargetSpec } from "../../backend/lower.ts";
@@ -211,7 +212,22 @@ function printedName(name: string): string {
  * those calls `toOwned` with the type it expects there.
  * ------------------------------------------------------------------ */
 
-function toOwned(expr: TExpr, expectedType: SemType | undefined): string {
+/**
+ * @param allowBorrowed Only ever `true` from a `let` with no declared type to satisfy (see that
+ * call site). A `Cow`-returning call (`expr.resultIsCow`, `docs/decisions/0014-*.md`) is then left
+ * exactly as `print` renders it — nothing forces that binding to be `String` rather than
+ * `Cow<'_, str>`, and its own later uses read through `Deref<Target = str>` or `&`-coerce into one
+ * either way, so leaving it a borrow when the callee's own scan found nothing to drop is exactly
+ * the allocation that decision exists to skip. Every other position `toOwned` is called from has a
+ * concrete destination type to satisfy (a record field, a list element, an `Option<String>`, an
+ * owned call argument, a reassignment, another function's own `String` return), where a bare
+ * `Cow<'_, str>` would not typecheck, so `ternary` and `some` below never forward this past
+ * themselves even when the position that called them did allow it: an `if`/`else` needs the same
+ * type on both arms regardless of what its *own* result will be used for, and an `Option`'s inner
+ * type is a plain `SemType` at the Core level, never `Cow`-shaped, at any position this backend
+ * builds one.
+ */
+function toOwned(expr: TExpr, expectedType: SemType | undefined, allowBorrowed = false): string {
 	if (expectedType !== undefined && isCopyType(expectedType)) return print(expr);
 	switch (expr.kind) {
 		case "name":
@@ -235,9 +251,19 @@ function toOwned(expr: TExpr, expectedType: SemType | undefined): string {
 		}
 		case "none":
 			return "None";
+		case "call":
+			// A call to a `Cow`-returning function (see the doc comment above) does not "already
+			// produce a fresh, owned value" the way every other call in this backend does — it may
+			// hand back a borrow of one of its own arguments instead. `.into_owned()` is the
+			// conversion that is actually correct here: `.to_owned()` would instead clone the `Cow`
+			// itself (the blanket `impl<T: Clone> ToOwned for T` applies to `Cow<'_, str>` before
+			// `Deref` coercion ever gets a chance to reach `str`'s own `ToOwned`), leaving the type
+			// `Cow<'_, str>` rather than turning it into `String` — silently wrong in exactly the
+			// position that needed the conversion.
+			return expr.resultIsCow === true && !allowBorrowed ? `${print(expr)}.into_owned()` : print(expr);
 		default:
-			// call, method, raw, binary, unary, index, record, list, lambda, zero: every one of
-			// these already produces a fresh, owned value, so there is nothing to convert.
+			// method, raw, binary, unary, index, record, list, lambda, zero: every one of these
+			// already produces a fresh, owned value, so there is nothing to convert.
 			return print(expr);
 	}
 }
@@ -1163,6 +1189,22 @@ export const RUST_CANDIDATES: readonly Candidate[] = [
 				const cheap = arg.kind === "lit" || arg.kind === "name";
 				const source = cheap ? print(arg) : "__retain_src";
 				const binding = cheap ? "" : `let ${source} = ${print(arg)}; `;
+				// `ctx.cowReturn` (see `docs/decisions/0014-*.md`, `analysis/cow-returns.ts`) is true
+				// only for the exact return-statement call this pass already proved sound to borrow
+				// from: a scan first, to find out whether *any* byte would be dropped, then either
+				// `Cow::Borrowed` the untouched input (no allocation at all) or build the owned string
+				// the old, unconditional path always built. The scan costs one extra `.bytes().all(...)`
+				// pass on the input this backend was already going to walk once either way; for the
+				// common case this pass exists for -- a value with nothing to drop -- that is the
+				// *only* pass, instead of a pass plus a fresh `String`.
+				if (ctx.cowReturn === true) {
+					return raw(
+						`{ ${binding}if ${source}.bytes().all(|__b| ${rangeTest("__b")}) { Cow::Borrowed(${source}) } else { ` +
+							`let mut __out = String::with_capacity(${source}.len()); ` +
+							`for __b in ${source}.bytes() { if ${rangeTest("__b")} { __out.push(__b as char); } } ` +
+							`Cow::Owned(__out) } }`,
+					);
+				}
 				return raw(
 					`{ ${binding}let mut __out = String::with_capacity(${source}.len()); ` +
 						`for __b in ${source}.bytes() { if ${rangeTest("__b")} { __out.push(__b as char); } } __out }`,
@@ -1539,7 +1581,10 @@ function printStmt(statement: TStmt, scope: Scope): string {
 	switch (statement.kind) {
 		case "let":
 			scope.set(statement.name, statement.type);
-			return `let ${statement.mutable ? "mut " : ""}${statement.name} = ${toOwned(statement.init, statement.type)};`;
+			// `allowBorrowed`: nothing prints a type annotation here (see `toOwned`'s own comment),
+			// so a `Cow`-returning call's result may stay a borrow when its own scan found nothing
+			// to drop — exactly the allocation `docs/decisions/0014-*.md` exists to skip.
+			return `let ${statement.mutable ? "mut " : ""}${statement.name} = ${toOwned(statement.init, statement.type, true)};`;
 		case "multiLet":
 			// Only reached with a name count other than 2, which the shared lowerer never produces.
 			return `let (${statement.names.join(", ")}) = ${print(statement.init)};`;
@@ -1686,7 +1731,12 @@ export function printFunction(fn: TFunc): string {
 			return `${param.name}: ${rustParamType(param.type, param.borrowed === true)}`;
 		})
 		.join(", ");
-	const returnType = fn.fails.length > 0 ? `Result<${rustType(fn.ret)}, CoreError>` : rustType(fn.ret);
+	// `fn.cowReturn` (see `docs/decisions/0014-*.md`) is set only for a function this pass proved
+	// returns either an unmodified borrow of its own (single, borrowed) parameter or a freshly
+	// built owned string -- exactly what `Cow<'_, str>` exists to hold, with the lifetime eliding
+	// to that one parameter's the same way it would for a bare `&str` return.
+	const returnType =
+		fn.fails.length > 0 ? `Result<${rustType(fn.ret)}, CoreError>` : fn.cowReturn === true ? "Cow<'_, str>" : rustType(fn.ret);
 	const doc = fn.doc === undefined ? "" : `${fn.doc.split("\n").map((line) => `/// ${line}`.trimEnd()).join("\n")}\n`;
 	const body = withFnCtx({ ret: fn.ret, fails: fn.fails }, () => printBody(fn.body, scope));
 	// `exported` (a utility) is `pub`, reachable from outside the crate through `lib.rs`'s flat
@@ -2122,6 +2172,14 @@ function supportModule(_program: CProgram, needs: SupportNeeds): { path: string;
 		`// engine: ${ENGINE_VERSION}`,
 		"// source: support",
 		"#![allow(dead_code)]",
+		"",
+		// Re-exported so every generated module sees it through its own `use crate::*;` (see
+		// `printModule`) without needing its own import line -- `std` does not put `Cow` in the
+		// prelude, unlike `Option`/`String`/`Vec`. Needed only by a function
+		// `docs/decisions/0014-*.md`'s pre-pass found Cow-eligible; harmless, and unflagged by
+		// `unused_imports` (allowed at the crate root, in `lib.rs`), when nothing in a given project
+		// is.
+		"pub use std::borrow::Cow;",
 		"",
 		GENERIC_SUPPORT.trim(),
 	];
@@ -2786,8 +2844,13 @@ export const RUST_BACKEND: Backend = {
 	// The whole-program pre-pass (see `analysis/borrows.ts` and `docs/decisions/0010-*.md`): the
 	// shared lowerer only consults this map (`TParam.borrowed`, a "call" node's `borrowedArgs`), it
 	// never computes it, and it is Rust's own free function precisely so no other target's build
-	// pays for it or is affected by it.
-	extraLowerOptions: (program) => ({ borrows: computeBorrowableParams(program) }),
+	// pays for it or is affected by it. `computeCowReturns` is the scoped extension on top of it
+	// (`docs/decisions/0014-*.md`), and it needs the same borrow map as an input, since a Cow
+	// return is only sound when its source parameter already borrows.
+	extraLowerOptions: (program) => {
+		const borrows = computeBorrowableParams(program);
+		return { borrows, cowReturns: computeCowReturns(program, borrows) };
+	},
 	printModule: printModuleTracked,
 	importPath,
 	support: supportModule,

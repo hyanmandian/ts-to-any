@@ -36,6 +36,15 @@ export type TExpr =
 			 * meaning every non-Rust target has ever needed.
 			 */
 			readonly borrowedArgs?: readonly boolean[];
+			/**
+			 * Set when this call's callee is a Rust function whose return type is `Cow<'_, str>`
+			 * instead of an owned `String` (see `docs/decisions/0014-*.md` and
+			 * `analysis/cow-returns.ts`). A plain call otherwise "already produces a fresh, owned
+			 * value" as far as `toOwned` is concerned; this is the one case where it does not, and
+			 * needs `.into_owned()` rather than nothing at an owning position. Never set for a
+			 * target with no such distinction.
+			 */
+			readonly resultIsCow?: boolean;
 	  }
 	| {
 			readonly kind: "method";
@@ -137,6 +146,13 @@ export type TFunc = {
 	/** Domain errors this function may raise; the Go backend turns these into a second return. */
 	readonly fails: readonly string[];
 	readonly usesEnv: boolean;
+	/**
+	 * Set when this function's Rust return type is `Cow<'_, str>` instead of an owned `String`
+	 * (see `docs/decisions/0014-*.md` and `analysis/cow-returns.ts`). `printFunction` reads this
+	 * to decide the signature; it does not re-derive it. Never set for a target with no such
+	 * distinction.
+	 */
+	readonly cowReturn?: boolean;
 	/**
 	 * True for the capability-taking form of an entry point that also has a no-capabilities public
 	 * wrapper, or for an entry point that takes capabilities directly because its target has no
